@@ -1,0 +1,262 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ibisPaint X .ipv file format notes</title><link rel="icon" href="favicon.svg" type="image/svg+xml"><link rel="stylesheet" href="style.css?v=1">
+<style>main{max-width:900px}table{border-collapse:collapse;width:100%;font-size:.92rem;display:block;overflow-x:auto}th,td{border:1px solid var(--line);padding:5px 8px;text-align:left;vertical-align:top}pre{background:var(--soft);padding:10px;border-radius:8px;overflow-x:auto;font-size:.85rem}code{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.9em}h1,h2{margin-top:1.4em}</style></head>
+<body><main><p><a href="index.html">← IPV Layer Tool</a></p>
+<h1>ibisPaint X <code>.ipv</code> file format – reverse-engineering notes</h1>
+<p>Based on two sample files made with <strong>ibisPaint X ver.13.1.12</strong> (Android, realme RMX1971):
+<code>Untitled221.ipv</code> (107 KB, 59 records, 1 layer) and <code>Untitled71.ipv</code> (9.6 MB, 4515 records, 14 layers, 16 sessions).
+The code in <code>ipv-core.js</code> implements everything marked ✅.</p>
+<p><strong>Legend</strong> ✅ verified by tests (details at the end) · 🟡 working guess that fits all data · ❓ unknown</p>
+<p>All numbers are <strong>big-endian</strong> (Java <code>DataOutputStream</code> style). Times are <code>f64</code> seconds since 1970. A <em>UTF string</em> is <code>u16 length + UTF-8 bytes</code>.</p>
+<hr />
+<h2>1. Container ✅</h2>
+<p>The file is a flat list of records. Records also nest inside payloads.</p>
+<pre><code>[kind u8][0 u8][type u8][sub u8][payload length u32][payload ...][-(8+length) i32]
+</code></pre>
+<p>The trailing negative length lets a reader walk backwards. Both files parse to the last byte, and rebuilding every record gives a byte-identical file.</p>
+<h2>2. Typical file layout ✅</h2>
+<pre><code>(1,1) canvas info               once
+(1,2) app info                  one per editing session
+   ... history of the session: (3,6) layer operations, (2,x)/(3,x) tool and stroke events, (4,15) stroke snapshots ...
+(1,3) session end               one per session
+(1,9) ...                       only seen in the small file
+(1,5) layer images              one per layer, then the paper, then the flattened preview
+(1,6) footer                    the final layer stack + settings (always last)
+</code></pre>
+<p>The loader almost certainly restores the document from the last block <code>(1,5)* + (1,6)</code>. The history before it is what the app replays for the drawing video / undo (🟡 – not testable without the app).</p>
+<h2>3. Record catalogue</h2>
+<table>
+<thead>
+<tr>
+<th>(kind,type)</th>
+<th>Meaning</th>
+<th>Status</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>(1,1)</td>
+<td>Canvas info: <code>f64 t, u32 w, u32 h, UTF projectId, u8 0</code>. <strong>w×h is the size at creation</strong></td>
+<td>✅</td>
+</tr>
+<tr>
+<td>(1,2)</td>
+<td>App info: <code>u32 0x00010527, f64 t, UTF "ibisPaint X", UTF "ver.13.1.12", UTF device, 32 bytes</code> (the 32 bytes were identical everywhere; copied verbatim)</td>
+<td>✅</td>
+</tr>
+<tr>
+<td>(1,3)</td>
+<td>Session end: <code>f64 t, f64 total active drawing seconds so far</code> (cumulative; the footer stores its integer part)</td>
+<td>✅</td>
+</tr>
+<tr>
+<td>(1,5)</td>
+<td>Layer image, see §6</td>
+<td>✅</td>
+</tr>
+<tr>
+<td>(1,6)</td>
+<td>Footer, see §7</td>
+<td>✅</td>
+</tr>
+<tr>
+<td>(1,9)</td>
+<td>Small file only: two committed-stroke wrappers (see 4,15) plus glue</td>
+<td>🟡</td>
+</tr>
+<tr>
+<td>(2,1)</td>
+<td>View change (pan/zoom): <code>f64 t, f32 x, f32 y, f32 zoom, f64 t2, f32 x, f32 y, f32 zoom, 12 bytes</code></td>
+<td>🟡</td>
+</tr>
+<tr>
+<td>(2,2)</td>
+<td>Tool change: <code>f64 t, i32 from, i32 to, u8 1</code></td>
+<td>🟡</td>
+</tr>
+<tr>
+<td>(2,3)</td>
+<td>Pen stroke: <code>f64 t0, f64 t1, 8 bytes, 3×u32, u32 n</code>, then <em>n</em> nested points <code>(2,3,sub 1)</code>: <code>f64 t, f32 x, f32 y</code> (canvas coordinates), then a 292/305-byte brush record <code>(1,2,sub 2)</code> and a 30-byte record <code>(2,3,sub 3)</code>. No pressure is stored</td>
+<td>✅ points · 🟡 rest</td>
+</tr>
+<tr>
+<td>(2,5), (2,9)</td>
+<td>Other gesture / tool records (a single point; two floats 100.0 and 50.0)</td>
+<td>❓</td>
+</tr>
+<tr>
+<td>(2,6)</td>
+<td>Pen settings: <code>f64 t, 4 bytes, f32 10.0, f32 60.0</code></td>
+<td>🟡</td>
+</tr>
+<tr>
+<td>(2,11)</td>
+<td>Canvas crop/resize: old size <code>u32 w,h</code>, new size (as <code>u16</code> pairs), crop offset <code>u32 x,y</code></td>
+<td>🟡</td>
+</tr>
+<tr>
+<td>(3,1)</td>
+<td>Brush settings = the 292-byte brush record: brush id (twice), size <code>f32</code> at +12, many float parameters, a per-stroke value at +192</td>
+<td>🟡</td>
+</tr>
+<tr>
+<td>(3,3)</td>
+<td>Colour palette: list of <code>(3,3,sub 1)</code> records <code>u8 1, R, G, B, A</code></td>
+<td>🟡</td>
+</tr>
+<tr>
+<td>(3,4)</td>
+<td>Layer property snapshot: <code>f64 t, u8 flag (1/0), u32 1, u32 n, n × layer record</code></td>
+<td>✅ shape</td>
+</tr>
+<tr>
+<td>(3,5)</td>
+<td>Layer attribute change: contains three <code>1.0f</code> at 5-float spacing (an identity matrix?) and sometimes a nested layer record</td>
+<td>❓</td>
+</tr>
+<tr>
+<td>(3,6)</td>
+<td><strong>Layer list operation</strong>, see §4</td>
+<td>✅</td>
+</tr>
+<tr>
+<td>(4,15)</td>
+<td>Compressed stroke snapshot: <code>…, u32 1, u32 len, raw DEFLATE</code>. Inflated data = one record <code>(4,14,3)</code> whose payload starts <code>u32 strokeNo, 4 bytes, f32 originX, f32 originY, …, f32 size at +44, u32 ARGB colour at +56</code>, followed by a nested stroke <code>(2,3)</code> whose points are <strong>relative to the origin</strong></td>
+<td>✅ points · 🟡 size/colour offsets (matched one file)</td>
+</tr>
+</tbody>
+</table>
+<h2>4. Layer operation <code>(3,6)</code> ✅</h2>
+<p>All 82 records in both samples (including two that carry whole photos) rebuild byte-identically from this grammar:</p>
+<pre><code>f64 t | u32 op
+u32 nA, nA × rec(3,6,3){i32 id}                 layer ids before   (bottom → top, the paper -1 last)
+u32 nB, nB × rec(3,6,3){i32 id}                 layer ids after
+u32 x1 | u32 x2 | u32 n1, n1 × layer record     x1 = |A|, x2 = insert index for &quot;add&quot; ops
+i32 bg (= 0xFFFFFF00) | u32 pngLen | PNG        PNG only for photo ops, else pngLen = 0
+u32 6 | f32 1.0 | u32 0 | u32 0 | u32 0         (20 fixed bytes)
+u32 n2, n2 × layer record                       state of layers in A
+u32 n3, n3 × layer record                       state of layers in B
+16 bytes: 80000000 80000000 00000000 80000000
+</code></pre>
+<p>Operation codes seen: <code>0</code> move layer · <code>1</code> add empty layer · <code>2</code> (once, insert) · <code>4</code>, <code>5</code> delete layer · <code>6</code> set paper / initial list · <code>7</code> <strong>first photo of a new canvas</strong> · <code>10</code> <strong>add photo as a new layer</strong> (embeds the photo as a canvas-sized PNG). Ops 7 and 10 are exactly what the tool writes for each photo; the generated ops 7 and 6 are field-for-field identical to the app's own.</p>
+<h2>5. Layer record <code>(3,4,sub 2|3)</code> ✅ (47 bytes with an empty name)</h2>
+<table>
+<thead>
+<tr>
+<th>Field</th>
+<th>Meaning</th>
+<th>Status</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>i32 id</code></td>
+<td>unique layer id, paper = -1</td>
+<td>✅</td>
+</tr>
+<tr>
+<td><code>u8 flags</code></td>
+<td>bit 0 = visible. Also seen: 3, 0x21</td>
+<td>✅ bit 0 · ❓ rest</td>
+</tr>
+<tr>
+<td><code>f32 opacity</code></td>
+<td>0..1 (paper stores 0.5, no visible effect)</td>
+<td>✅</td>
+</tr>
+<tr>
+<td><code>i32 blend</code></td>
+<td>0 = normal. Seen in history: 1, 2, 9, 13, 16, 17 (names unknown)</td>
+<td>✅ 0 · ❓ others</td>
+</tr>
+<tr>
+<td><code>i32 -1</code></td>
+<td>constant</td>
+<td></td>
+</tr>
+<tr>
+<td><code>u32 d</code></td>
+<td>0x80000000 normally, 0xFFFFFFFC for a layer just created, 6 on one layer</td>
+<td>❓</td>
+</tr>
+<tr>
+<td><code>UTF name</code></td>
+<td>empty unless the user renamed the layer; then <code>sub</code> = 3</td>
+<td>✅</td>
+</tr>
+<tr>
+<td><code>i32 -1, i32 0</code></td>
+<td>constants</td>
+<td></td>
+</tr>
+<tr>
+<td><code>i32 parent</code></td>
+<td>-5 = top level, otherwise the id of the folder that contains it; paper 0x80000000</td>
+<td>✅</td>
+</tr>
+<tr>
+<td><code>i32 0, u32 0x80000000, i32 -1</code></td>
+<td>constants</td>
+<td></td>
+</tr>
+</tbody>
+</table>
+<p>A <strong>folder</strong> is a layer record with no image record; its children carry its id in <code>parent</code>. Folders are shown above their children in the bottom→top list.</p>
+<h2>6. Layer images <code>(1,5)</code> and RPNG bitmaps ✅</h2>
+<pre><code>f64 t | i32 layerId (-1 = paper / whole canvas) | i32 kind (1 layer, 0 flattened preview) | u16 (0x0400 for layers, 0 for preview) | u32 len | data
+</code></pre>
+<ul>
+<li>Empty layers and the paper have <code>len = 0</code>. The record with <code>kind 0</code> holds a normal PNG (the flattened preview, opaque RGBA, canvas size).</li>
+<li>A layer with pixels holds an <strong>RPNG</strong> block:</li>
+</ul>
+<pre><code>&quot;RPNG&quot; | u32 45 | u32 0
+header (45 bytes): u8 flag, then 11 × u32:
+   canvasW, canvasH, boxW, boxH, boxX, boxYFromBottom, pngW, pngH, pad, z2, indexBytes
+run index: indexBytes/4 entries of (u16 gap, u16 run)
+u32 pngLen | PNG (8-bit RGBA)
+</code></pre>
+<ul>
+<li>The box is the bounding box of the non-transparent pixels. Scan it <strong>bottom row first, left to right, as one long line</strong> (rows are not separated).</li>
+<li>Each entry skips <code>gap</code> empty cells, then <code>run</code> pixels follow. Gaps/runs above 65535 are split: <code>(65535,0)</code> for gaps (seen in the app's data), <code>(gap,65535)</code> then <code>(0,…)</code> for runs (my choice). The last entry carries the trailing gap and <code>run = 0</code>.</li>
+<li>The PNG holds only those pixels, in scan order, in rows of <code>pngW</code>; <strong>its rows are stored bottom-up</strong>. <code>pngW = ceil(sqrt(count)/8)·8</code>, <code>pngH = ceil(count/pngW)</code>, <code>pad = pngW·pngH − count</code> zero pixels at the end of the last data row.</li>
+<li>Pixels are <strong>straight (not premultiplied) RGBA</strong>. <code>flag</code>/<code>z2</code> were 4 / 0xFFFFFF00 in the photo file and 0 / 0 in the other (🟡 per-file settings; copied from the source file).</li>
+</ul>
+<h2>7. Footer <code>(1,6)</code> ✅</h2>
+<pre><code>u32 0x527 | UTF projectId | UTF title | 16 zero bytes | f64 created | f64 saved | f64 saved−0.002
+u64 total seconds | u16 0 | u32 w | u32 h  (CURRENT canvas size) | UTF &quot;Unknown&quot; | 8 zero bytes
+u16 number of non-empty layer images | u32 number of layer records
+layer records (§5) – the FINAL layer stack, bottom → top, paper last
+opaque tail (≈ 700 bytes): tool settings, the title again, the creation size u32 0x527,w,h, a UUID (UTF, 36 chars)
+</code></pre>
+<p>The project id occurs only in <code>(1,1)</code> and here; the UUID only here.</p>
+<h2>8. Stack order and compositing ✅</h2>
+<p>Layer order is <strong>bottom → top</strong>; the paper entry is a sentinel at the end of the list. Rendering visible layers with straight-alpha "normal" blending, hidden layers skipped, opacity applied and folders composited as groups, over white, reproduces the app's saved preview: <strong>0 / 255 difference on file 1, ≤ 1 / 255 on file 2</strong>. Other blend modes are drawn as normal by the tool (flagged in the manifest).</p>
+<h2>9. What the tool writes</h2>
+<ul>
+<li><strong>Extract</strong>: every layer (full size and cropped), the flattened picture, the app's preview, the photos stored in history, <code>manifest.json</code>.</li>
+<li><strong>Add photos to a project</strong>: keeps all old history records and layer images byte-for-byte, appends a new session with one op 10 per photo, new <code>(1,5)</code> images, a new preview and an updated footer. IDs: highest used id + 1.</li>
+<li><strong>New project</strong>: <code>(1,1)</code>, <code>(1,2)</code>, op 7 for the first photo, op 6, op 10 for the others, <code>(1,3)</code>, images, footer. Settings bytes come from the sample file.</li>
+<li><strong>Replace layer pixels</strong>: swaps the RPNG data and the preview; the history is untouched.</li>
+<li>Optional "separate copy" gives the copy a new project id and UUID.</li>
+</ul>
+<h2>10. Evidence (all re-run on every change)</h2>
+<ul>
+<li>Byte-exact rebuild of both files; every footer and (3,6) record rebuilt identically; 1393 layer records regenerated identically from parsed fields.</li>
+<li>All 12 real layer bitmaps decode pixel-identically in two independent implementations (Python and JavaScript); decode → encode → decode gives the same header, run index and pixels.</li>
+<li>Generated files (new / add / replace, with and without history) were re-read by independent Python code: framing, grammar, footer counts, layer order, pixel equality, preview vs. independent compositing, embedded photos equal to the inputs, untouched history and layer images identical to the original.</li>
+<li>The page was exercised in headless Chromium (open, ZIP export, single downloads, photo import with several options, add to both sample files, replace by name/position).</li>
+</ul>
+<p><strong>Opening generated files in ibisPaint X:</strong> reported working by the owner of the sample files (one device, one app version). Not independently verified here.</p>
+<h2>11. Still unknown – and the small test files that would settle it</h2>
+<p>Make each file with the smallest possible edit (new canvas, one change, save as <code>.ipv</code>):</p>
+<ol>
+<li>Blank canvas saved at once (baseline) · the same canvas with one photo imported.</li>
+<li>One layer <strong>renamed</strong> · one layer <strong>hidden</strong> · one layer with <strong>opacity 50 %</strong> · <strong>alpha lock</strong> on · <strong>clipping</strong> on · <strong>locked</strong> layer (one setting per file → decodes <code>flags</code>, <code>d</code>).</li>
+<li>One file with a layer for <strong>every blend mode</strong> in the order of the app's list (write the order down → decodes <code>blend</code>).</li>
+<li>A <strong>folder</strong> with two layers · a renamed folder · a folder inside a folder.</li>
+<li>A <strong>text</strong> layer · a layer with a <strong>filter/effect</strong> · a <strong>selection</strong> active when saving.</li>
+<li>Paper colour changed / paper hidden · canvas rotated · canvas created with a transparent background.</li>
+<li>Any file that the app refuses after editing with this tool (tell me the exact message).</li>
+</ol>
+</main></body></html>

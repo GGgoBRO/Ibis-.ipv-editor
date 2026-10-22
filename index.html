@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="description" content="Extract layers and pictures from ibisPaint X .ipv files and import many photos as layers. Runs in your browser.">
+<meta name="color-scheme" content="light dark">
+<title>IPV Layer Tool – extract layers and import photos (ibisPaint X)</title>
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="style.css?v=1">
+</head>
+<body>
+<noscript><p style="padding:16px">This tool needs JavaScript.</p></noscript>
+<main>
+<h1>IPV Layer Tool</h1>
+<p class="sub">Take layers and pictures out of ibisPaint X <b>.ipv</b> files, and put photos back in as layers. Everything runs inside your browser – no file is uploaded anywhere.</p>
+
+<section class="card" id="s-open">
+  <h2><span class="num">1</span>Open an .ipv file</h2>
+  <input type="file" id="file-ipv" aria-label="Choose an .ipv file">
+  <div class="box" id="summary" hidden></div>
+</section>
+
+<section class="card" id="s-extract" hidden>
+  <h2><span class="num">2</span>Extract pictures</h2>
+  <p class="hint">Choose what you want, then download everything in one ZIP.</p>
+  <label class="chk"><input type="checkbox" id="x-layers" checked><span><b>Each layer as PNG</b><br><span class="hint">full canvas size, transparent background</span></span></label>
+  <label class="chk"><input type="checkbox" id="x-trim"><span><b>Each layer cropped</b><br><span class="hint">only the part that has pixels; position is written in the file name</span></span></label>
+  <label class="chk"><input type="checkbox" id="x-flat" checked><span><b>Flattened picture</b><br><span class="hint">all visible layers together</span></span></label>
+  <label class="chk"><input type="checkbox" id="x-prev"><span><b>Preview image saved by the app</b></span></label>
+  <label class="chk"><input type="checkbox" id="x-orig"><span><b>Original photos from the history</b><br><span class="hint">photos that were imported into the project (if any)</span></span></label>
+  <label class="chk"><input type="checkbox" id="x-hidden" checked><span><b>Include hidden layers</b></span></label>
+  <label class="chk"><input type="checkbox" id="x-man" checked><span><b>manifest.json</b><br><span class="hint">list of layers: order, visibility, opacity, position</span></span></label>
+  <div class="row">
+    <button class="btn" id="b-zip">Download ZIP</button>
+    <button class="btn sec" id="b-flat-png">Flattened PNG</button>
+    <button class="btn sec" id="b-flat-jpg">Flattened JPG</button>
+  </div>
+  <h2 style="margin-top:14px">Layers (bottom to top)</h2>
+  <ul class="layers" id="layer-list"></ul>
+  <div id="orig-list"></div>
+</section>
+
+<section class="card" id="s-import">
+  <h2><span class="num">3</span>Put photos in as layers</h2>
+  <p class="hint">Every photo becomes its own layer. The first photo is the bottom layer.</p>
+  <fieldset style="border:0;padding:0;margin:0">
+    <label class="chk"><input type="radio" name="mode" value="add" id="m-add"><span><b>Add to the opened project</b><br><span class="hint">keeps your layers and drawing history, adds the photos on top</span></span></label>
+    <label class="chk"><input type="radio" name="mode" value="new" id="m-new" checked><span><b>Make a new project</b></span></label>
+  </fieldset>
+  <label class="field"><span>Photos (you can choose many)</span><input type="file" id="file-photos" accept="image/*" multiple></label>
+  <ul class="photos" id="photo-list"></ul>
+
+  <div id="new-opts">
+    <label class="field"><span>Project name</span><input type="text" id="o-title" value="Photos"></label>
+    <label class="field"><span>Canvas size</span>
+      <select id="o-size"><option value="first">Same as the first photo</option><option value="largest">Same as the largest photo</option><option value="custom">Custom size</option></select></label>
+    <div class="row" id="custom-size" hidden><input type="number" id="o-w" min="16" max="8192" value="1080" style="width:46%"> × <input type="number" id="o-h" min="16" max="8192" value="1920" style="width:46%"></div>
+    <label class="field"><span>Largest side of the canvas</span>
+      <select id="o-max"><option value="1024">1024 px</option><option value="1600">1600 px</option><option value="2048" selected>2048 px (recommended)</option><option value="3000">3000 px</option><option value="4096">4096 px</option><option value="0">No limit (may crash a phone)</option></select></label>
+  </div>
+  <label class="field"><span>How to fit a photo on the canvas</span>
+    <select id="o-fit"><option value="contain">Whole photo visible (empty space is transparent)</option><option value="cover">Fill the canvas (edges are cut)</option><option value="stretch">Stretch to the canvas</option><option value="center">Original size, centered</option></select></label>
+  <label class="field"><span>Order</span>
+    <select id="o-order"><option value="list">As in the list above</option><option value="name">Sort by file name (1, 2, 10 …)</option><option value="rev">Reverse of the list</option></select></label>
+  <details><summary>More options</summary>
+    <label class="chk"><input type="checkbox" id="o-hist" checked><span><b>Also store the photos in the history</b><br><span class="hint">This is what the app itself does when you import a photo. The file is about twice as big. Turn it off for a smaller file.</span></span></label>
+    <label class="chk"><input type="checkbox" id="o-copy" checked><span><b>Save as a separate copy</b> (new project ID)<br><span class="hint">Applies when you add photos to an opened project or replace layers. Recommended, so the app does not mix the new file up with your original project.</span></span></label>
+    <label class="chk"><input type="checkbox" id="o-names"><span><b>Use file names as layer names</b> (experimental)<br><span class="hint">If the app does not accept the file, build again with this off.</span></span></label>
+  </details>
+  <div class="row"><button class="btn" id="b-build">Build .ipv and download</button><button class="btn sec" id="b-again" hidden>Download again</button></div>
+</section>
+
+<section class="card" id="s-replace" hidden>
+  <h2><span class="num">4</span>Put edited layer pictures back</h2>
+  <p class="hint">Choose the layer PNGs you exported earlier (after editing). A file is matched to its layer by the number in its name, like <code>03_layer25.png</code>. Only the saved pictures change; the drawing history stays as it was.</p>
+  <input type="file" id="file-repl" accept="image/*" multiple>
+  <ul class="photos" id="repl-list"></ul>
+  <div class="row"><button class="btn" id="b-repl" disabled>Replace and download .ipv</button></div>
+</section>
+
+<section class="card"><h2>Log</h2><pre id="log">Ready. Choose an .ipv file in step 1, or go straight to step 3 to make a new project from photos.</pre></section>
+<div id="status" role="status"></div>
+<p class="foot">Unofficial tool, not affiliated with ibis Inc. “ibisPaint” is a trademark of ibis Inc. Your files never leave your device. <a href="format.html">File format notes</a>.</p>
+</main>
+<script src="ipv-core.js?v=1"></script>
+<script src="app.js?v=1"></script>
+</body>
+</html>

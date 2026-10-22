@@ -206,10 +206,6 @@ Options accepted by `addLayers` / `buildNew` / `replaceLayers`: `embedHistory`, 
 
 The `.ipv` format is not documented by its maker. Everything the tool knows is written down in [IPV_FORMAT.md](IPV_FORMAT.md) (also as a [web page](https://gggobro.github.io/Ibis-.ipv-editor/format.html)): the record container, layer operations, layer records, the RPNG layer bitmap, the footer and how compositing is reproduced, each part marked verified, guess or unknown.
 
-## Help wanted
-
-Files from other app versions are the fastest way to make this better. The "Still unknown" list in `IPV_FORMAT.md` (section 11) describes small test files that would settle open questions: renamed / hidden / 50 % opacity layers, one layer per blend mode, folders, text layers, and any file the app refuses after editing with this tool (please include the exact message).
-
 ---
 
 ## Disclaimer

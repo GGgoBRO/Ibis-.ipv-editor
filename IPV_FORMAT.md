@@ -1,6 +1,6 @@
 # ibisPaint X `.ipv` file format – reverse-engineering notes
 
-Based on two sample files made with **ibisPaint X ver.13.1.12** (Android, realme RMX1971):
+Based on two sample files made with **ibisPaint X ver.13.1.12** (Android):
 `Untitled221.ipv` (107 KB, 59 records, 1 layer) and `Untitled71.ipv` (9.6 MB, 4515 records, 14 layers, 16 sessions).
 The code in `ipv-core.js` implements everything marked ✅.
 
